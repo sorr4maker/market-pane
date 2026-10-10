@@ -662,7 +662,7 @@ check("一批网络失败：另一批五个指数和新浪金价仍保留", part
 func probeReply(_ meta: String, symbol: String = "^HSI") -> Data {
     Data(#"{"spark":{"result":[{"symbol":"\#(symbol)","response":[{"meta":\#(meta)}]}]}}"#.utf8)
 }
-func probing(_ mock: ContentMock, symbol: String = "^HSI", name: String? = nil) -> Result<IndexSpec, Error> {
+func probing(_ mock: some HTTPFetching, symbol: String = "^HSI", name: String? = nil) -> Result<IndexSpec, Error> {
     run {
         do { return .success(try await IndexService(fetcher: mock).probe(symbol: symbol, name: name)) }
         catch { return .failure(error) }
@@ -705,6 +705,11 @@ check("试抓没有代码：找不到行情", probeError(probing(ContentMock(rep
 check("试抓返回别的代码：不能误加", probeError(probing(ContentMock(reply: probeReply(indexMeta, symbol: "^OTHER")))) == .notFound("^HSI"))
 check("试抓坏 JSON：找不到行情", probeError(probing(ContentMock(reply: Data("{}".utf8)))) == .notFound("^HSI"))
 check("试抓网络抛错：网络错误", probeError(probing(ContentMock(down: true))) == .network)
+/// Yahoo 对不存在的代码回 404，URLSessionFetcher 会抛 badServerResponse
+struct Yahoo404: HTTPFetching {
+    func data(from url: URL, headers: [String: String]) async throws -> Data { throw URLError(.badServerResponse) }
+}
+check("试抓代码不存在（Yahoo 回 404）：提示找不到，而不是网络问题", probeError(probing(Yahoo404())) == .notFound("^HSI"))
 let blankMock = ContentMock()
 let blankResult = probing(blankMock, symbol: " \n ")
 check("试抓空代码：不发请求，提示找不到", probeError(blankResult) == .notFound("") && run { await blankMock.urls }.isEmpty)
@@ -712,6 +717,18 @@ check("试抓空代码：不发请求，提示找不到", probeError(blankResult
 // MARK: - 真实网络（加 --live 才跑）
 if CommandLine.arguments.contains("--live") {
     section("真实网络")
+    // 自定义内容：常用清单全部 40 个要分两批抓；自填代码的试抓
+    let all = IndexCatalog.all
+    let wide = run { await IndexService().fetch(asOf: Date(), specs: all) }
+    let missingIDs = all.map(\.id).filter { wide.quote($0) == nil }
+    check("常用清单 \(all.count) 个指数分批抓取：全部有报价", missingIDs.isEmpty, "缺：\(missingIDs)")
+    let hsi = run { try? await IndexService().probe(symbol: " ^hsi ") }
+    check("试抓 ^HSI：是指数，归到亚太，时区香港", hsi?.yahooSymbol == "^HSI" && hsi?.region == .asia && hsi?.timeZoneID == "Asia/Hong_Kong",
+          "\(String(describing: hsi))")
+    let fut = run { () -> ProbeError? in do { _ = try await IndexService().probe(symbol: "ES=F"); return nil } catch { return error as? ProbeError } }
+    if case .notIndex = fut { check("试抓期货 ES=F：拒绝（不是指数）", true) } else { check("试抓期货 ES=F：拒绝（不是指数）", false, "\(String(describing: fut))") }
+    let bogus = run { () -> ProbeError? in do { _ = try await IndexService().probe(symbol: "^NOPE12345"); return nil } catch { return error as? ProbeError } }
+    check("试抓不存在的代码：报找不到", bogus == .notFound("^NOPE12345"), "\(String(describing: bogus))")
     let now = Date()
     let live = run { await IndexService().fetch(asOf: now) }
     let bj = DateFormatter(); bj.timeZone = TimeZone(identifier: "Asia/Shanghai"); bj.dateFormat = "MM-dd HH:mm"

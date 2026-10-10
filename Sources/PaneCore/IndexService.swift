@@ -60,6 +60,8 @@ public struct IndexService: Sendable {
         guard !symbol.isEmpty else { throw ProbeError.notFound(symbol) }
         let data: Data
         do { data = try await fetcher.data(from: YahooSparkParser.url(symbols: [symbol])) }
+        // 代码不存在时 Yahoo 回 404（URLSessionFetcher 报 badServerResponse）：这是「找不到」，不是网络问题
+        catch let e as URLError where e.code == .badServerResponse { throw ProbeError.notFound(symbol) }
         catch { throw ProbeError.network }
         guard let meta = try? YahooSparkParser.parseMetadata(data, symbol: symbol) else { throw ProbeError.notFound(symbol) }
         guard meta.instrumentType == "INDEX" else { throw ProbeError.notIndex(symbol, type: meta.instrumentType ?? "未知") }
