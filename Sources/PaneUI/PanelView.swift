@@ -38,13 +38,13 @@ public struct PanelView: View {
                         if st.showSectionLabels && st.showStatus { IndexLegend() }
                     }
                     .frame(height: st.s(16))
-                    IndexListView(board: snapshot.indices, now: now, upIsRed: snapshot.settings.upIsRed, onSelect: onSelectIndex)
+                    IndexListView(board: snapshot.indices, specs: snapshot.settings.content.indices, now: now, upIsRed: snapshot.settings.upIsRed, onSelect: onSelectIndex)
                     GroupCard {
                         GoldRow(quote: snapshot.indices?.gold, now: now, upIsRed: snapshot.settings.upIsRed)
                     }
                 }
                 .frame(minWidth: RowMetrics.columnWidth(st), maxWidth: .infinity, alignment: .leading)
-                FXTablesView(fx: snapshot.fx, upIsRed: snapshot.settings.upIsRed, onSelect: onSelectFX)
+                FXTablesView(fx: snapshot.fx, content: snapshot.settings.content, upIsRed: snapshot.settings.upIsRed, onSelect: onSelectFX)
                     .frame(minWidth: st.s(232), maxWidth: .infinity, alignment: .leading)
             }
         }

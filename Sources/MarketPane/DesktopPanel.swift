@@ -40,6 +40,15 @@ final class DesktopPanelController {
         panel.orderFrontRegardless()
     }
 
+    /// 内容（指数、币种、表）变了：重新量每一档需要的大小，更新上下限，把超限的窗口收回来
+    func contentChanged(model: AppModel) {
+        guard let panel = window else { return }   // 面板还没建过：建的时候会按新内容量
+        model.panelTiers = AdaptivePanel.idealSizes(snapshot: model.snapshot, now: Date())
+        updateSizeLimits(panel, model: model)
+        clampSize(panel)
+        keepOnScreen(panel)
+    }
+
     private func makePanel(model: AppModel) -> NSPanel {
         let tiers = AdaptivePanel.idealSizes(snapshot: model.snapshot, now: Date())
         model.panelTiers = tiers

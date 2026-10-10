@@ -4,18 +4,21 @@ import PaneCore
 /// 汇率三张表（人民币 / 新台币 / 美元为基准）。面板拉小时只显示一张，用顶部的切换按钮换；选了哪张会记住。
 public struct FXTablesView: View {
     let fx: FXSnapshot?
+    /// 面板上显示的币种和表（用户选的）
+    let content: PaneContent
     let upIsRed: Bool
     /// 点某一行打开那个货币对的 K 线
     let onSelect: ((FXPairSpec) -> Void)?
     @Environment(\.paneStyle) private var st
     @AppStorage("fxTableIndex") private var selected = 0
 
-    public init(fx: FXSnapshot?, upIsRed: Bool, onSelect: ((FXPairSpec) -> Void)? = nil) {
-        self.fx = fx; self.upIsRed = upIsRed; self.onSelect = onSelect
+    public init(fx: FXSnapshot?, content: PaneContent = .standard, upIsRed: Bool, onSelect: ((FXPairSpec) -> Void)? = nil) {
+        self.fx = fx; self.content = content; self.upIsRed = upIsRed; self.onSelect = onSelect
     }
 
     public var body: some View {
-        let tables = FXTables.build(fx)
+        let tables = FXTables.build(fx, content: content)
+        let missing = fx?.missing(in: content.currencies) ?? []
         VStack(alignment: .leading, spacing: st.s(6)) {
             HStack(spacing: st.s(4)) {
                 Text("汇率").font(.system(size: st.s(12), weight: .semibold))
@@ -31,8 +34,8 @@ public struct FXTablesView: View {
             } else {
                 ForEach(tables, id: \.title) { table($0, showTitle: true) }
             }
-            if let fx, fx.isStale || !fx.missing(in: PaneContent.standard.currencies).isEmpty {
-                Text(fx.missing(in: PaneContent.standard.currencies).isEmpty ? "部分汇率落后于 \(Fmt.fxDay(fx.expectedDate))" : "暂缺：\(fx.missing(in: PaneContent.standard.currencies).map { Currency.named($0).name }.joined(separator: "、"))")
+            if let fx, fx.isStale || !missing.isEmpty {
+                Text(missing.isEmpty ? "部分汇率落后于 \(Fmt.fxDay(fx.expectedDate))" : "暂缺：\(missing.map { Currency.named($0).name }.joined(separator: "、"))")
                     .font(.system(size: st.s(9))).foregroundStyle(.orange)
             }
         }

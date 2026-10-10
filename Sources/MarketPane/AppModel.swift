@@ -35,7 +35,9 @@ final class AppModel: ObservableObject {
     private let detail = DetailWindowController()
     /// 详情图的走势按需抓、带缓存
     let chartService = ChartService()
+    private let editor = ContentEditorController()
     private var loop: Task<Void, Never>?
+    private var rerunForced = false
 
     private init() {
         snapshot = store.load() ?? PaneSnapshot(generatedAt: Date())
@@ -53,21 +55,51 @@ final class AppModel: ObservableObject {
     }
 
     /// 指数：有市场在交易时约每分钟一次，都休市时 5 分钟一次；汇率：前一天的收盘，换日才抓。
+    /// 正在抓的时候又来了强制刷新（比如刚改了内容），等这轮结束后再来一轮，不丢。
     func refresh(force: Bool) async {
-        guard !isRefreshing else { return }
+        if isRefreshing {
+            if force { rerunForced = true }
+            return
+        }
         isRefreshing = true
         defer { isRefreshing = false }
-        let now = Date()
-        if force || RefreshPolicy.indicesDue(snapshot.indices, now: now) {
-            let fresh = await indexService.fetch(asOf: now)
-            update { $0.indices = fresh.merging(previous: $0.indices) }
-        }
-        if force || RefreshPolicy.fxDue(snapshot.fx, now: now) {
-            let fresh = await fxService.fetch(asOf: now)
-            update { $0.fx = fresh.merging(previous: $0.fx) }
-        }
+        var force = force
+        repeat {
+            rerunForced = false
+            await refreshOnce(force: force)
+            force = true
+        } while rerunForced
         lastRefreshed = Date()
     }
+
+    private func refreshOnce(force: Bool) async {
+        let now = Date()
+        let content = snapshot.settings.content
+        if force || RefreshPolicy.indicesDue(snapshot.indices, now: now) {
+            let fresh = await indexService.fetch(asOf: now, specs: content.indices)
+            update { $0.indices = fresh.merging(previous: $0.indices, ids: content.indices.map(\.id)) }
+        }
+        if force || RefreshPolicy.fxDue(snapshot.fx, now: now, codes: content.currencies) {
+            let fresh = await fxService.fetch(asOf: now, codes: content.currencies)
+            update { $0.fx = fresh.merging(previous: $0.fx, codes: content.currencies) }
+        }
+    }
+
+    /// 「编辑内容」改了指数、币种或表：保存、按新内容重新量面板各档大小，再抓一遍数据。
+    /// 只是调顺序、开关某张表时不用重新抓（数据一样，面板按新顺序画就行）。
+    func setContent(_ content: PaneContent) {
+        let old = snapshot.settings.content
+        guard content != old else { return }
+        update { $0.settings.content = content }
+        panel.contentChanged(model: self)
+        objectWillChange.send()
+        let sameData = old.indices.map(\.id).sorted() == content.indices.map(\.id).sorted()
+            && old.currencies.sorted() == content.currencies.sorted()
+        if !sameData { Task { await refresh(force: true) } }
+    }
+
+    /// 打开「编辑内容」窗口
+    func showContentEditor() { editor.show(model: self) }
 
     func setUpIsRed(_ v: Bool) { update { $0.settings.upIsRed = v } }
 
