@@ -214,7 +214,7 @@ public struct FXSnapshot: Codable, Sendable, Equatable {
     }
 }
 
-// MARK: 三张表
+// MARK: 汇率表
 
 public struct FXRowModel: Sendable, Equatable {
     public let label: String
@@ -231,36 +231,25 @@ public struct FXTableModel: Sendable, Equatable {
 }
 
 public enum FXTables {
-    /// 人民币表、新台币表：「1 外币 = ? 本币」（日元、新台币、港币兑人民币按 100 单位）；
-    /// 美元表：「1 美元 = ? 外币」（和 TradingView 的 USDCNY / USDJPY 一致，用户选的）。
-    /// TODO(sol)：按 `content` 生成表：每个 baseTables 一张，行是 currencies 里除基准外的币种（按顺序），
-    /// 单位用 Currency.unit(from:to:)；基准是美元时是「1 美元 = ? 外币」（单位固定 1）。标题用币种名，副标题沿用现在的写法。
-    /// 默认内容（PaneContent.standard）生成的结果必须和下面旧的 build 完全一样。
+    /// 表和行都按用户的顺序；美元表沿用「1 美元 → 外币」，其余按固定单位换成本币。
     public static func build(_ s: FXSnapshot?, content: PaneContent) -> [FXTableModel] {
-        build(s)
-    }
-
-    public static func build(_ s: FXSnapshot?) -> [FXTableModel] {
         func row(_ label: String, _ pair: FXPairSpec) -> FXRowModel {
             let v = s?.value(of: pair.from, in: pair.to), p = s?.previousValue(of: pair.from, in: pair.to)
             let pct: Double? = { guard let v, let p, p != 0 else { return nil }; return (v / p - 1) * 100 }()
             return FXRowModel(label: label, value: v.map { $0 * pair.unit }, changePercent: pct, pair: pair)
         }
-        func intoBase(_ base: String, _ items: [(String, Double)]) -> [FXRowModel] {
-            items.map { code, unit in
-                row("\(Int(unit))\(Currency.named(code).name)", FXPairSpec(from: code, to: base, unit: unit))
+        return content.baseTables.map { base in
+            let name = Currency.named(base).name
+            let rows = content.currencies.filter { $0 != base }.map { code in
+                if base == "USD" { return row(Currency.named(code).name, FXPairSpec(from: "USD", to: code)) }
+                let unit = Currency.unit(from: code, to: base)
+                return row("\(Int(unit))\(Currency.named(code).name)", FXPairSpec(from: code, to: base, unit: unit))
             }
+            return FXTableModel(title: name, subtitle: base == "USD" ? "1 美元 → 外币" : "外币 → \(name)", rows: rows)
         }
-        let cny = FXTableModel(title: "人民币", subtitle: "外币 → 人民币",
-                               rows: intoBase("CNY", [("JPY", 100), ("USD", 1), ("EUR", 1), ("TWD", 100), ("HKD", 100)]))
-        let twd = FXTableModel(title: "新台币", subtitle: "外币 → 新台币",
-                               rows: intoBase("TWD", [("CNY", 1), ("JPY", 100), ("USD", 1), ("EUR", 1), ("HKD", 1)]))
-        let usd = FXTableModel(title: "美元", subtitle: "1 美元 → 外币",
-                               rows: ["CNY", "JPY", "EUR", "TWD", "HKD"].map {
-                                   row(Currency.named($0).name, FXPairSpec(from: "USD", to: $0))
-                               })
-        return [cny, twd, usd]
     }
+
+    public static func build(_ s: FXSnapshot?) -> [FXTableModel] { build(s, content: .standard) }
 }
 
 // MARK: 抓取

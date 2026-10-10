@@ -16,6 +16,14 @@ public struct SparkQuote: Sendable, Equatable {
     }
 }
 
+public struct SparkMetadata: Sendable {
+    public let regularMarketPrice: Double
+    public let instrumentType: String?
+    public let exchangeTimezoneName: String?
+    public let shortName: String?
+    public let longName: String?
+}
+
 public enum YahooSparkParser {
     private struct Root: Decodable { let spark: Spark }
     private struct Spark: Decodable { let result: [Item]? }
@@ -27,6 +35,10 @@ public enum YahooSparkParser {
         let previousClose: Double?
         let chartPreviousClose: Double?
         let currentTradingPeriod: Periods?
+        let instrumentType: String?
+        let exchangeTimezoneName: String?
+        let shortName: String?
+        let longName: String?
     }
     private struct Periods: Decodable { let regular: Period? }
     private struct Period: Decodable { let start: Double; let end: Double }
@@ -35,6 +47,15 @@ public enum YahooSparkParser {
         var allowed = CharacterSet.alphanumerics; allowed.insert(charactersIn: ".-")
         let list = symbols.map { $0.addingPercentEncoding(withAllowedCharacters: allowed)! }.joined(separator: ",")
         return URL(string: "https://query1.finance.yahoo.com/v7/finance/spark?symbols=\(list)&range=1d&interval=5m")!
+    }
+
+    /// 试抓只需要价格和标的信息，不要求有价格时间或当天走势。
+    public static func parseMetadata(_ data: Data, symbol: String) throws -> SparkMetadata {
+        let root = try JSONDecoder().decode(Root.self, from: data)
+        guard let meta = root.spark.result?.first(where: { $0.symbol == symbol })?.response?.first?.meta,
+              let price = meta.regularMarketPrice, price.isFinite, price > 0 else { throw ParseError.empty }
+        return SparkMetadata(regularMarketPrice: price, instrumentType: meta.instrumentType,
+                             exchangeTimezoneName: meta.exchangeTimezoneName, shortName: meta.shortName, longName: meta.longName)
     }
 
     public static func parse(_ data: Data) throws -> [String: SparkQuote] {

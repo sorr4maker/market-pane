@@ -5,13 +5,24 @@ public struct IndexService: Sendable {
     public init(fetcher: HTTPFetching = URLSessionFetcher()) { self.fetcher = fetcher }
 
     /// Yahoo 批量请求拿 `specs` 里的指数，再用一个新浪请求拿 A 股指数实时价和伦敦金。
-    /// TODO(sol)：Yahoo spark 一次最多 20 个代码，超过要分批并发请求再合并。
     public func fetch(asOf now: Date = Date(), specs: [IndexSpec] = IndexSpec.all) async -> IndexBoard {
-        async let sparkData = try? fetcher.data(from: YahooSparkParser.url(symbols: specs.map(\.yahooSymbol)))
         // A 股指数和伦敦金在同一个新浪请求里
         async let sinaData = try? fetcher.data(from: SinaParser.url(codes: specs.compactMap(\.sinaCode) + [Gold.sinaCode]),
                                                headers: SinaParser.headers)
-        let yahoo = (await sparkData).flatMap { try? YahooSparkParser.parse($0) } ?? [:]
+        let symbols = specs.map(\.yahooSymbol)
+        let yahoo = await withTaskGroup(of: [String: SparkQuote].self) { group in
+            // 超过 20 个会被 Yahoo 拒绝；一批失败不影响其他批。
+            for start in stride(from: 0, to: symbols.count, by: 20) {
+                let batch = Array(symbols[start..<min(start + 20, symbols.count)])
+                group.addTask {
+                    guard let data = try? await fetcher.data(from: YahooSparkParser.url(symbols: batch)) else { return [:] }
+                    return (try? YahooSparkParser.parse(data)) ?? [:]
+                }
+            }
+            var out: [String: SparkQuote] = [:]
+            for await batch in group { out.merge(batch) { first, _ in first } }
+            return out
+        }
         let sinaRaw = await sinaData
         let sina = sinaRaw.flatMap { try? SinaParser.parseAShare($0) } ?? [:]
         let gold = sinaRaw.flatMap { try? SinaParser.parseFutures($0) }?[Gold.sinaCode].map(Gold.quote(from:))
@@ -44,9 +55,21 @@ public struct IndexService: Sendable {
 
     /// 自填代码时先试抓一次：抓得到、类型是指数（不是期货、外汇、个股）才返回。名字用 `name`，没填就用 Yahoo 的简称；
     /// 地区按交易所时区归组（Region.of）。id 用 Yahoo 代码本身。
-    /// TODO(sol)：实现。失败时抛 ProbeError，错误文案是中文、能直接显示给用户。
     public func probe(symbol: String, name: String? = nil) async throws -> IndexSpec {
-        throw ProbeError.notFound(symbol)
+        let symbol = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !symbol.isEmpty else { throw ProbeError.notFound(symbol) }
+        let data: Data
+        do { data = try await fetcher.data(from: YahooSparkParser.url(symbols: [symbol])) }
+        catch { throw ProbeError.network }
+        guard let meta = try? YahooSparkParser.parseMetadata(data, symbol: symbol) else { throw ProbeError.notFound(symbol) }
+        guard meta.instrumentType == "INDEX" else { throw ProbeError.notIndex(symbol, type: meta.instrumentType ?? "未知") }
+        func nonempty(_ value: String?) -> String? {
+            guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+            return trimmed
+        }
+        let timeZoneID = meta.exchangeTimezoneName ?? "UTC"
+        return IndexSpec(id: symbol, name: nonempty(name) ?? nonempty(meta.shortName) ?? nonempty(meta.longName) ?? symbol,
+                         yahooSymbol: symbol, sinaCode: nil, region: Region.of(timeZoneID: timeZoneID), timeZoneID: timeZoneID)
     }
 }
 

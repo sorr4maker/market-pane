@@ -514,6 +514,201 @@ for w in stride(from: loSize.width, through: hiSize.width, by: 7) {
 }
 check("从最小到最大的任何大小（共 \(windows) 种）：选中的一档完整放得下、字号不小于 0.75 倍", worst.why.isEmpty, "\(worst)")
 
+// MARK: - 自定义内容
+section("自定义内容")
+let standardTables = FXTables.build(fx, content: .standard)
+// 写死旧版的表结构，避免一行包装和新实现互相当期望值。
+typealias ExpectedFXRow = (label: String, from: String, to: String, unit: Double)
+let standardRows: [[ExpectedFXRow]] = [
+    [("100日元", "JPY", "CNY", 100), ("1美元", "USD", "CNY", 1), ("1欧元", "EUR", "CNY", 1),
+     ("100新台币", "TWD", "CNY", 100), ("100港币", "HKD", "CNY", 100)],
+    [("1人民币", "CNY", "TWD", 1), ("100日元", "JPY", "TWD", 100), ("1美元", "USD", "TWD", 1),
+     ("1欧元", "EUR", "TWD", 1), ("1港币", "HKD", "TWD", 1)],
+    [("人民币", "USD", "CNY", 1), ("日元", "USD", "JPY", 1), ("欧元", "USD", "EUR", 1),
+     ("新台币", "USD", "TWD", 1), ("港币", "USD", "HKD", 1)],
+]
+let standardTitles = ["人民币", "新台币", "美元"]
+let standardSubtitles = ["外币 → 人民币", "外币 → 新台币", "1 美元 → 外币"]
+let rawUSD = Dictionary(uniqueKeysWithValues: fx.points.map { ($0.code, $0.usdPer) }).merging(["USD": 1]) { a, _ in a }
+let rawPreviousUSD = Dictionary(uniqueKeysWithValues: fx.points.compactMap { p in p.previousUsdPer.map { (p.code, $0) } })
+    .merging(["USD": 1]) { a, _ in a }
+check("默认内容：三张表的标题、副标题和顺序与旧版相同",
+      standardTables.map(\.title) == standardTitles && standardTables.map(\.subtitle) == standardSubtitles)
+for (i, expected) in standardRows.enumerated() {
+    let actual = standardTables[i].rows
+    check("默认\(standardTitles[i])表：行标签、顺序、方向和单位与旧版逐项相同",
+          actual.count == expected.count && zip(actual, expected).allSatisfy { row, e in
+              row.label == e.label && row.pair.from == e.from && row.pair.to == e.to && row.pair.unit == e.unit
+          })
+    check("默认\(standardTitles[i])表：数值和涨跌幅与旧版逐项相同",
+          actual.count == expected.count && zip(actual, expected).allSatisfy { row, e in
+              let current = rawUSD[e.from]! / rawUSD[e.to]!
+              let previous = rawPreviousUSD[e.from]! / rawPreviousUSD[e.to]!
+              return near(row.value, current * e.unit, 1e-12) && near(row.changePercent, (current / previous - 1) * 100, 1e-12)
+          })
+}
+check("旧 build 包装返回默认内容", FXTables.build(fx) == standardTables)
+
+let customContent = PaneContent(indices: Array(IndexCatalog.all.suffix(2)), currencies: ["CNY", "USD", "KRW", "GBP"],
+                                baseTables: ["CNY", "GBP", "USD"])
+let customTables = FXTables.build(fx, content: customContent)
+let customRows: [[ExpectedFXRow]] = [
+    [("1美元", "USD", "CNY", 1), ("1000韩元", "KRW", "CNY", 1000), ("1英镑", "GBP", "CNY", 1)],
+    [("100人民币", "CNY", "GBP", 100), ("100美元", "USD", "GBP", 100), ("10000韩元", "KRW", "GBP", 10000)],
+    [("人民币", "USD", "CNY", 1), ("韩元", "USD", "KRW", 1), ("英镑", "USD", "GBP", 1)],
+]
+check("自定义表：按基准顺序显示人民币、英镑、美元，副标题正确",
+      customTables.map(\.title) == ["人民币", "英镑", "美元"]
+      && customTables.map(\.subtitle) == ["外币 → 人民币", "外币 → 英镑", "1 美元 → 外币"])
+for (i, expected) in customRows.enumerated() {
+    check("自定义\(customTables[i].title)表：排除基准，行顺序、标签、单位和方向正确",
+          customTables[i].rows.count == expected.count && zip(customTables[i].rows, expected).allSatisfy { row, e in
+              row.label == e.label && row.pair.from == e.from && row.pair.to == e.to && row.pair.unit == e.unit
+          })
+}
+check("自定义韩元没有样本：三张表的韩元行数值和涨跌幅都为空",
+      customTables.allSatisfy { table in
+          let rows = table.rows.filter { $0.pair.from == "KRW" || $0.pair.to == "KRW" }
+          return rows.count == 1 && rows.allSatisfy { $0.value == nil && $0.changePercent == nil }
+      })
+check("自定义表保留有数据的人民币、美元换算", near(customTables[0].rows[0].value, 6.7045, 1e-5)
+      && near(customTables[2].rows[0].value, 6.7045, 1e-5))
+check("基准英镑缺数据：整张表为空", customTables[1].rows.allSatisfy { $0.value == nil && $0.changePercent == nil })
+check("自定义内容没有快照：结构不变、所有数值为空", FXTables.build(nil, content: customContent).map(\.rows).map { $0.map(\.label) }
+      == customRows.map { $0.map(\.label) } && FXTables.build(nil, content: customContent).allSatisfy { $0.rows.allSatisfy { $0.value == nil } })
+check("不选基准表：没有表", FXTables.build(fx, content: PaneContent(indices: [], currencies: ["USD"], baseTables: [])).isEmpty)
+check("只选一个币种：基准表没有行", FXTables.build(fx, content: PaneContent(indices: [], currencies: ["USD"], baseTables: ["USD"]))
+      .first?.rows.isEmpty == true)
+
+for (from, to, unit) in [("JPY", "CNY", 100.0), ("TWD", "CNY", 100), ("HKD", "CNY", 100),
+                         ("CNY", "TWD", 1), ("HKD", "TWD", 1), ("JPY", "TWD", 100),
+                         ("KRW", "CNY", 1000), ("GBP", "CNY", 1), ("KRW", "GBP", 10000), ("USD", "USD", 1)] {
+    check("固定单位：\(from) → \(to) 是 \(Int(unit))", Currency.unit(from: from, to: to) == unit)
+}
+for (zone, region) in [("Europe/Zurich", Region.europe), ("America/Sao_Paulo", .us),
+                       ("Australia/Sydney", .asia), ("Pacific/Auckland", .asia)] {
+    check("时区分组：\(zone) → \(region.rawValue)", Region.of(timeZoneID: zone) == region)
+}
+let oldSettings = try? JSONDecoder().decode(PaneSettings.self, from: Data(#"{"upIsRed":false}"#.utf8))
+check("旧设置没有 content：默认内容，保留绿涨红跌", oldSettings?.content == .standard && oldSettings?.upIsRed == false)
+for (label, content) in [("默认", PaneContent.standard), ("自定义", customContent)] {
+    let roundtrip = try? JSONDecoder().decode(PaneContent.self, from: JSONEncoder().encode(content))
+    check("\(label)内容编码再解码相等", roundtrip == content)
+}
+check("指数目录 id 不重复", Set(IndexCatalog.all.map(\.id)).count == IndexCatalog.all.count)
+check("指数目录 Yahoo 代码不重复", Set(IndexCatalog.all.map(\.yahooSymbol)).count == IndexCatalog.all.count)
+check("指数目录所有时区有效", IndexCatalog.all.allSatisfy { TimeZone(identifier: $0.timeZoneID) != nil })
+let defaultIDs: Set<String> = ["SSE", "TWII", "N225", "KS11", "FTSE", "DAX", "CAC", "SPX", "NDX", "DJI", "VIX", "VXN"]
+check("指数目录包含默认 12 个", defaultIDs.isSubset(of: Set(IndexCatalog.all.map(\.id)))
+      && Set(PaneContent.standard.indices.map(\.id)) == defaultIDs)
+
+func requestedSymbols(_ url: URL) -> [String] {
+    let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "symbols" }?.value ?? ""
+    return value.split(separator: ",").map(String.init)
+}
+// 并发请求会同时记 URL，用 actor 避免检查本身的数据竞争。
+actor ContentMock: HTTPFetching {
+    var urls: [URL] = []
+    var sinaHeaders: [String: String] = [:]
+    let reply: Data?
+    let down: Bool
+    let failSymbol: String?
+    init(reply: Data? = nil, down: Bool = false, failSymbol: String? = nil) {
+        self.reply = reply; self.down = down; self.failSymbol = failSymbol
+    }
+    func data(from url: URL, headers: [String: String]) async throws -> Data {
+        urls.append(url)
+        if down { throw URLError(.timedOut) }
+        if url.host == "hq.sinajs.cn" { sinaHeaders = headers; return sinaFixture() }
+        let symbols = requestedSymbols(url)
+        if let failSymbol, symbols.contains(failSymbol) { throw URLError(.timedOut) }
+        if let reply { return reply }
+        let items = symbols.map { symbol in
+            ["symbol": symbol, "response": [["meta": ["regularMarketPrice": 100, "regularMarketTime": 1000]]]] as [String: Any]
+        }
+        return try JSONSerialization.data(withJSONObject: ["spark": ["result": items]])
+    }
+}
+let batchSpecs = (0..<25).map { i in
+    IndexSpec(id: "TEST\(i)", name: "检查指数\(i)", yahooSymbol: "^TEST\(i)", sinaCode: nil, region: .asia, timeZoneID: "UTC")
+}
+let batchMock = ContentMock()
+let batchBoard = run { await IndexService(fetcher: batchMock).fetch(asOf: sampleNow, specs: batchSpecs) }
+let batchURLs = run { await batchMock.urls }
+let sparkURLs = batchURLs.filter { $0.path == "/v7/finance/spark" }
+check("25 个指数分成恰好两个 spark 请求", sparkURLs.count == 2)
+check("每批不超过 20 个代码，批大小为 20 和 5", sparkURLs.map { requestedSymbols($0).count }.sorted() == [5, 20])
+check("分批请求恰好覆盖全部 25 个代码，无重复", sparkURLs.flatMap(requestedSymbols).count == 25
+      && Set(sparkURLs.flatMap(requestedSymbols)) == Set((0..<25).map { "^TEST\($0)" }))
+check("两批结果合并，按用户顺序返回全部 25 个指数", batchBoard.quotes.map(\.id) == (0..<25).map { "TEST\($0)" }
+      && batchBoard.quotes.allSatisfy { $0.price == 100 && $0.source == .yahoo })
+check("新浪仍只请求一次伦敦金，保留 Referer", batchURLs.filter { $0.host == "hq.sinajs.cn" }.map(\.absoluteString)
+      == ["https://hq.sinajs.cn/list=hf_XAU"] && run { await batchMock.sinaHeaders } == SinaParser.headers && batchBoard.gold != nil)
+for count in [0, 1, 20, 21, 40, 41] {
+    let specs = (0..<count).map { IndexSpec(id: "B\($0)", name: "边界\($0)", yahooSymbol: "^B\($0)",
+                                          sinaCode: nil, region: .asia, timeZoneID: "UTC") }
+    let mock = ContentMock()
+    let board = run { await IndexService(fetcher: mock).fetch(asOf: sampleNow, specs: specs) }
+    let urls = run { await mock.urls }.filter { $0.path == "/v7/finance/spark" }
+    check("分批边界 \(count) 个：请求数正确、每批 ≤20、全部合并", urls.count == (count + 19) / 20
+          && urls.allSatisfy { (1...20).contains(requestedSymbols($0).count) }
+          && Set(urls.flatMap(requestedSymbols)) == Set((0..<count).map { "^B\($0)" })
+          && board.quotes.map(\.id) == (0..<count).map { "B\($0)" })
+}
+let partialBatch = run { await IndexService(fetcher: ContentMock(failSymbol: "^TEST0")).fetch(asOf: sampleNow, specs: batchSpecs) }
+check("一批网络失败：另一批五个指数和新浪金价仍保留", partialBatch.quotes.map(\.id) == (20..<25).map { "TEST\($0)" }
+      && partialBatch.gold != nil)
+
+func probeReply(_ meta: String, symbol: String = "^HSI") -> Data {
+    Data(#"{"spark":{"result":[{"symbol":"\#(symbol)","response":[{"meta":\#(meta)}]}]}}"#.utf8)
+}
+func probing(_ mock: ContentMock, symbol: String = "^HSI", name: String? = nil) -> Result<IndexSpec, Error> {
+    run {
+        do { return .success(try await IndexService(fetcher: mock).probe(symbol: symbol, name: name)) }
+        catch { return .failure(error) }
+    }
+}
+func probeError(_ result: Result<IndexSpec, Error>) -> ProbeError? {
+    if case .failure(let error) = result { return error as? ProbeError }
+    return nil
+}
+let indexMeta = #"{"regularMarketPrice":26000,"instrumentType":"INDEX","exchangeTimezoneName":"Asia/Hong_Kong","shortName":"HANG SENG INDEX   "}"#
+let probeMock = ContentMock(reply: probeReply(indexMeta))
+let probed = try? probing(probeMock, symbol: " ^hsi ").get()
+check("试抓指数：去掉 Yahoo 简称尾随空格，按香港时区归亚太", probed?.name == "HANG SENG INDEX"
+      && probed?.timeZoneID == "Asia/Hong_Kong" && probed?.region == .asia && probed?.sinaCode == nil)
+check("试抓输入去空白转大写：id、代码和请求都是 ^HSI", probed?.id == "^HSI" && probed?.yahooSymbol == "^HSI"
+      && run { await probeMock.urls }.map(requestedSymbols) == [["^HSI"]])
+check("用户填名字：去首尾空白后优先用用户名字", (try? probing(ContentMock(reply: probeReply(indexMeta)), name: "  恒生指数 \n").get())?.name == "恒生指数")
+check("用户名字只有空白：改用 Yahoo 简称", (try? probing(ContentMock(reply: probeReply(indexMeta)), name: " \n ").get())?.name == "HANG SENG INDEX")
+let longMeta = #"{"regularMarketPrice":1,"instrumentType":"INDEX","exchangeTimezoneName":"Europe/Zurich","longName":"  Swiss Index   "}"#
+let longProbed = try? probing(ContentMock(reply: probeReply(longMeta))).get()
+check("没有简称：用去空白后的长名，瑞士时区归欧洲", longProbed?.name == "Swiss Index" && longProbed?.region == .europe
+      && longProbed?.timeZoneID == "Europe/Zurich")
+let minimalMeta = #"{"regularMarketPrice":1,"instrumentType":"INDEX"}"#
+let minimalProbed = try? probing(ContentMock(reply: probeReply(minimalMeta))).get()
+check("没有名字和时区：用代码和 UTC，无价格时间也能试抓", minimalProbed?.name == "^HSI" && minimalProbed?.timeZoneID == "UTC")
+let blankMeta = #"{"regularMarketPrice":1,"instrumentType":"INDEX","shortName":"   ","longName":"  Long Index  "}"#
+check("简称只有空白：回退到长名", (try? probing(ContentMock(reply: probeReply(blankMeta))).get())?.name == "Long Index")
+for type in ["FUTURE", "CURRENCY", "EQUITY"] {
+    let meta = #"{"regularMarketPrice":1,"instrumentType":"\#(type)"}"#
+    check("试抓 \(type)：拒绝非指数", probeError(probing(ContentMock(reply: probeReply(meta)))) == .notIndex("^HSI", type: type))
+}
+check("试抓缺标的类型：不能当作指数", probeError(probing(ContentMock(reply: probeReply(#"{"regularMarketPrice":1}"#))))
+      == .notIndex("^HSI", type: "未知"))
+for (label, price) in [("没有", ""), ("空", #", "regularMarketPrice":null"#), ("零", #", "regularMarketPrice":0"#),
+                       ("负", #", "regularMarketPrice":-1"#)] {
+    check("试抓\(label)价格：找不到有效行情", probeError(probing(ContentMock(reply: probeReply(#"{"instrumentType":"INDEX"\#(price)}"#))))
+          == .notFound("^HSI"))
+}
+check("试抓没有代码：找不到行情", probeError(probing(ContentMock(reply: Data(#"{"spark":{"result":null}}"#.utf8)))) == .notFound("^HSI"))
+check("试抓返回别的代码：不能误加", probeError(probing(ContentMock(reply: probeReply(indexMeta, symbol: "^OTHER")))) == .notFound("^HSI"))
+check("试抓坏 JSON：找不到行情", probeError(probing(ContentMock(reply: Data("{}".utf8)))) == .notFound("^HSI"))
+check("试抓网络抛错：网络错误", probeError(probing(ContentMock(down: true))) == .network)
+let blankMock = ContentMock()
+let blankResult = probing(blankMock, symbol: " \n ")
+check("试抓空代码：不发请求，提示找不到", probeError(blankResult) == .notFound("") && run { await blankMock.urls }.isEmpty)
+
 // MARK: - 真实网络（加 --live 才跑）
 if CommandLine.arguments.contains("--live") {
     section("真实网络")
