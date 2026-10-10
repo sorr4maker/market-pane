@@ -55,7 +55,9 @@ struct IndexRow: View {
 
     var body: some View {
         HStack(spacing: st.s(RowMetrics.spacing)) {
-            Text(spec.name).font(.system(size: st.s(12))).lineLimit(1).frame(width: st.s(RowMetrics.name), alignment: .leading)
+            // 名字长（欧洲斯托克50、自填的名字）时字号略缩，不截成「…」
+            Text(spec.name).font(.system(size: st.s(12))).lineLimit(1).minimumScaleFactor(0.7)
+                .frame(width: st.s(RowMetrics.name), alignment: .leading)
             Text(Fmt.price(quote?.price)).font(.system(size: st.s(12), weight: .medium).monospacedDigit())
                 .lineLimit(1).frame(maxWidth: .infinity, alignment: .trailing)
             if st.showSparkline {

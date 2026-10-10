@@ -219,7 +219,7 @@ struct CurrencyEditorPage: View {
                 Text("已选币种（\(content.currencies.count) 个，拖动调整顺序）")
             } footer: {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("表的顺序和币种顺序一致；表里的行也按这个顺序。至少 2 个币种、1 张表。")
+                    Text("表里的行按这个顺序；新开的表排在最后。至少 2 个币种、1 张表。")
                     Text("美元表是「1 美元 = ? 外币」，其余表是「? 外币 = ? 本币」。")
                 }
                 .font(.system(size: 11))
@@ -247,9 +247,9 @@ struct CurrencyEditorPage: View {
     }
 
     /// 表的顺序 = 币种顺序，且只能是已选的币种
+    /// 只去掉已经不在币种里的表，不按币种顺序重排：拖动币种、开关某张表时，其他表的顺序不变（默认是人民币、新台币、美元）
     private static func syncTables(_ c: inout PaneContent) {
-        let tables = Set(c.baseTables)
-        c.baseTables = c.currencies.filter { tables.contains($0) }
+        c.baseTables = c.baseTables.filter { c.currencies.contains($0) }
     }
 
     private func setTable(_ code: String, _ on: Bool) {
