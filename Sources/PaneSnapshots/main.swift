@@ -56,6 +56,44 @@ await MainActor.run {
     render("panel-empty", PanelView(snapshot: PaneSnapshot(generatedAt: sampleNow), now: sampleNow, draggable: false), scheme: .light)
 }
 
+// 自定义内容：指数 上证、恒生、沪深300、标普500、纳指100、欧洲斯托克50；币种 人民币、美元、日元、英镑、韩元；表 人民币、美元。
+// 样本里没有恒生、沪深300、斯托克50、英镑、韩元的数据，对应行显示「—」，汇率卡片底部提示暂缺。
+let customContent = PaneContent(
+    indices: ["SSE", "HSI", "CSI300", "SPX", "NDX", "SX5E"].map { id in IndexCatalog.all.first { $0.id == id }! },
+    currencies: ["CNY", "USD", "JPY", "GBP", "KRW"], baseTables: ["CNY", "USD"])
+let customIndices = await IndexService(fetcher: FixtureFetcher()).fetch(asOf: sampleNow, specs: customContent.indices)
+let customFX = await FXService(fetcher: FixtureFetcher()).fetch(asOf: sampleNow, codes: customContent.currencies)
+await MainActor.run {
+    let custom = PaneSnapshot(generatedAt: sampleNow, indices: customIndices, fx: customFX, settings: PaneSettings(upIsRed: true, content: customContent))
+    render("panel-custom", PanelView(snapshot: custom, now: sampleNow, draggable: false), scheme: .light)
+    let tiers = AdaptivePanel.idealSizes(snapshot: custom, now: sampleNow)
+    for (i, sz) in tiers.enumerated() { print("  自定义内容 档位 \(i) 在 1 倍时需要 \(Int(sz.width))×\(Int(sz.height))") }
+    render("adaptive-custom-small", AdaptivePanel(snapshot: custom, now: sampleNow, tierSizes: tiers)
+        .frame(width: tiers.last!.width, height: tiers.last!.height), scheme: .light)
+}
+
+// 「编辑内容」窗口：List 是 AppKit 表格，ImageRenderer 画不出来，所以放进离屏窗口再截图
+@MainActor func renderWindow<V: View>(_ name: String, _ view: V, size: CGSize, scheme: NSAppearance.Name) {
+    _ = NSApplication.shared
+    let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
+    let win = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+    win.appearance = NSAppearance(named: scheme)
+    win.contentView = host
+    win.orderBack(nil)
+    for _ in 0..<20 { RunLoop.current.run(until: Date().addingTimeInterval(0.05)); host.layoutSubtreeIfNeeded() }
+    host.displayIfNeeded()
+    guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { print("渲染失败 \(name)"); return }
+    host.cacheDisplay(in: host.bounds, to: rep)
+    guard let png = rep.representation(using: .png, properties: [:]) else { print("渲染失败 \(name)"); return }
+    try! png.write(to: out.appendingPathComponent("\(name).png"))
+    print("  \(name).png  \(Int(size.width))×\(Int(size.height))")
+}
+await MainActor.run {
+    let noProbe: (String, String?) async throws -> IndexSpec = { s, _ in throw ProbeError.notFound(s) }
+    renderWindow("editor-indices", ContentEditorView(content: customContent, edit: { _ in }, probe: noProbe), size: CGSize(width: 520, height: 620), scheme: .aqua)
+    renderWindow("editor-currencies", ContentEditorView(content: customContent, initialPage: 1, edit: { _ in }, probe: noProbe), size: CGSize(width: 520, height: 620), scheme: .aqua)
+}
+
 // Yahoo 挂掉、汇率只剩欧洲央行（没有新台币）的样子
 struct YahooDown: HTTPFetching {
     func data(from url: URL, headers: [String: String]) async throws -> Data {

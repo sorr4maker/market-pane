@@ -3,21 +3,27 @@ import PaneCore
 
 public struct IndexListView: View {
     let board: IndexBoard?
+    /// 面板上显示的指数（用户选的，顺序就是各地区卡片里的顺序）
+    let specs: [IndexSpec]
     let now: Date
     let upIsRed: Bool
     let onSelect: ((IndexSpec) -> Void)?
     @Environment(\.paneStyle) private var st
-    public init(board: IndexBoard?, now: Date, upIsRed: Bool, onSelect: ((IndexSpec) -> Void)? = nil) {
-        self.board = board; self.now = now; self.upIsRed = upIsRed; self.onSelect = onSelect
+    public init(board: IndexBoard?, specs: [IndexSpec] = IndexSpec.all, now: Date, upIsRed: Bool, onSelect: ((IndexSpec) -> Void)? = nil) {
+        self.board = board; self.specs = specs; self.now = now; self.upIsRed = upIsRed; self.onSelect = onSelect
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: st.s(6)) {
             ForEach(Region.allCases, id: \.self) { region in
-                GroupCard(title: st.showSectionLabels ? region.rawValue : nil) {
-                    ForEach(IndexSpec.all.filter { $0.region == region }, id: \.id) { spec in
-                        IndexRow(spec: spec, quote: board?.quote(spec.id), now: now, upIsRed: upIsRed,
-                                 onSelect: onSelect.map { f in { f(spec) } })
+                let inRegion = specs.filter { $0.region == region }
+                // 这个地区一个指数都没选就不画这张卡片
+                if !inRegion.isEmpty {
+                    GroupCard(title: st.showSectionLabels ? region.rawValue : nil) {
+                        ForEach(inRegion, id: \.id) { spec in
+                            IndexRow(spec: spec, quote: board?.quote(spec.id), now: now, upIsRed: upIsRed,
+                                     onSelect: onSelect.map { f in { f(spec) } })
+                        }
                     }
                 }
             }

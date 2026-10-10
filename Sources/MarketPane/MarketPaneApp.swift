@@ -21,6 +21,7 @@ struct PanelMenuItems: View {
     @ObservedObject var model: AppModel
     var body: some View {
         Toggle("编辑布局（拖动、调整大小）", isOn: $model.editingLayout)
+        Button("编辑内容（指数、汇率）…") { model.showContentEditor() }
         Button(model.isRefreshing ? "刷新中…" : "立即刷新") { Task { await model.refresh(force: true) } }
             .disabled(model.isRefreshing)
         Divider()
