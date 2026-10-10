@@ -31,8 +31,8 @@ public struct FXTablesView: View {
             } else {
                 ForEach(tables, id: \.title) { table($0, showTitle: true) }
             }
-            if let fx, fx.isStale || !fx.missing.isEmpty {
-                Text(fx.missing.isEmpty ? "部分汇率落后于 \(Fmt.fxDay(fx.expectedDate))" : "暂缺：\(fx.missing.map { Currency.named($0).name }.joined(separator: "、"))")
+            if let fx, fx.isStale || !fx.missing(in: PaneContent.standard.currencies).isEmpty {
+                Text(fx.missing(in: PaneContent.standard.currencies).isEmpty ? "部分汇率落后于 \(Fmt.fxDay(fx.expectedDate))" : "暂缺：\(fx.missing(in: PaneContent.standard.currencies).map { Currency.named($0).name }.joined(separator: "、"))")
                     .font(.system(size: st.s(9))).foregroundStyle(.orange)
             }
         }

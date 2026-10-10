@@ -33,12 +33,40 @@ public enum FXCalendar {
 public struct Currency: Sendable, Hashable {
     public let code: String
     public let name: String
-    /// 顺序按用户给的：中、日、美、欧、台、港
+    /// Yahoo 美元货币对；美元自己是 nil
+    public let yahooSymbol: String?
+    /// true：报价是「1 美元 = x 该货币」（CNY=X）；false：报价是「1 该货币 = x 美元」（EURUSD=X）
+    public let quotedPerUSD: Bool
+    /// 大致的「1 美元 = ? 该货币」，只用来给汇率表选单位（100 日元、1 美元……），汇率变化几倍以内单位都不会变
+    public let approxPerUSD: Double
+
+    /// 「编辑内容」里能选的币种。前 6 个是用户最早要的：中、日、美、欧、台、港
     public static let all: [Currency] = [
-        .init(code: "CNY", name: "人民币"), .init(code: "JPY", name: "日元"), .init(code: "USD", name: "美元"),
-        .init(code: "EUR", name: "欧元"), .init(code: "TWD", name: "新台币"), .init(code: "HKD", name: "港币"),
+        .init(code: "CNY", name: "人民币",   yahooSymbol: "CNY=X",    quotedPerUSD: true,  approxPerUSD: 7.1),
+        .init(code: "JPY", name: "日元",     yahooSymbol: "JPY=X",    quotedPerUSD: true,  approxPerUSD: 150),
+        .init(code: "USD", name: "美元",     yahooSymbol: nil,        quotedPerUSD: true,  approxPerUSD: 1),
+        .init(code: "EUR", name: "欧元",     yahooSymbol: "EURUSD=X", quotedPerUSD: false, approxPerUSD: 0.92),
+        .init(code: "TWD", name: "新台币",   yahooSymbol: "TWD=X",    quotedPerUSD: true,  approxPerUSD: 31.5),
+        .init(code: "HKD", name: "港币",     yahooSymbol: "HKD=X",    quotedPerUSD: true,  approxPerUSD: 7.8),
+        .init(code: "GBP", name: "英镑",     yahooSymbol: "GBPUSD=X", quotedPerUSD: false, approxPerUSD: 0.78),
+        .init(code: "KRW", name: "韩元",     yahooSymbol: "KRW=X",    quotedPerUSD: true,  approxPerUSD: 1380),
+        .init(code: "SGD", name: "新加坡元", yahooSymbol: "SGD=X",    quotedPerUSD: true,  approxPerUSD: 1.33),
+        .init(code: "AUD", name: "澳元",     yahooSymbol: "AUDUSD=X", quotedPerUSD: false, approxPerUSD: 1.5),
+        .init(code: "CAD", name: "加元",     yahooSymbol: "CAD=X",    quotedPerUSD: true,  approxPerUSD: 1.37),
+        .init(code: "CHF", name: "瑞士法郎", yahooSymbol: "CHF=X",    quotedPerUSD: true,  approxPerUSD: 0.85),
+        .init(code: "THB", name: "泰铢",     yahooSymbol: "THB=X",    quotedPerUSD: true,  approxPerUSD: 33),
+        .init(code: "NZD", name: "新西兰元", yahooSymbol: "NZDUSD=X", quotedPerUSD: false, approxPerUSD: 1.65),
     ]
-    public static func named(_ code: String) -> Currency { all.first { $0.code == code }! }
+    public static func named(_ code: String) -> Currency {
+        all.first { $0.code == code } ?? Currency(code: code, name: code, yahooSymbol: nil, quotedPerUSD: true, approxPerUSD: 1)
+    }
+
+    /// 汇率表里「? from = ? to」用几个单位：让数值至少是 1（100 日元 → 人民币、1 美元 → 人民币、1000 韩元 → 人民币）。
+    /// 按大致汇率算，所以单位是固定的，不会今天 1 明天 100。默认三张表的单位和用户最早定的一致。
+    public static func unit(from: String, to: String) -> Double {
+        let v = named(to).approxPerUSD / named(from).approxPerUSD   // 1 from ≈ v to
+        return [1.0, 100, 1000, 10000].first { v * $0 >= 1 } ?? 10000
+    }
 }
 
 /// 只抓 5 个美元货币对，其余交叉汇率都由它们换算，三张表彼此一致。
@@ -49,13 +77,10 @@ public struct USDPair: Sendable {
     public let quotedPerUSD: Bool
     public func usdPer(_ quote: Double) -> Double { quotedPerUSD ? 1 / quote : quote }
 
-    public static let all: [USDPair] = [
-        .init(code: "CNY", yahooSymbol: "CNY=X",    quotedPerUSD: true),
-        .init(code: "JPY", yahooSymbol: "JPY=X",    quotedPerUSD: true),
-        .init(code: "EUR", yahooSymbol: "EURUSD=X", quotedPerUSD: false),
-        .init(code: "TWD", yahooSymbol: "TWD=X",    quotedPerUSD: true),
-        .init(code: "HKD", yahooSymbol: "HKD=X",    quotedPerUSD: true),
-    ]
+    /// 清单里全部非美元币种的货币对（实际抓哪些由 PaneContent.currencies 决定）
+    public static let all: [USDPair] = Currency.all.compactMap { c in
+        c.yahooSymbol.map { USDPair(code: c.code, yahooSymbol: $0, quotedPerUSD: c.quotedPerUSD) }
+    }
     /// 欧洲央行参考价里没有新台币
     public var inECB: Bool { code != "TWD" }
 
@@ -172,13 +197,15 @@ public struct FXSnapshot: Codable, Sendable, Equatable {
     }
 
     public var isStale: Bool { points.contains { $0.date < expectedDate } }
-    public var missing: [String] { USDPair.all.map(\.code).filter { point($0) == nil } }
+    /// `codes` 里（美元除外）没抓到的币种
+    public func missing(in codes: [String]) -> [String] { codes.filter { $0 != "USD" && point($0) == nil } }
     public var displayDate: String? { points.map(\.date).max() }
 
-    public func merging(previous: FXSnapshot?) -> FXSnapshot {
+    /// 按 `codes`（用户选的币种）合并，不在里面的旧数据丢掉
+    public func merging(previous: FXSnapshot?, codes: [String] = PaneContent.standard.currencies) -> FXSnapshot {
         guard let previous else { return self }
         var merged: [FXPoint] = []
-        for code in USDPair.all.map(\.code) {
+        for code in codes where code != "USD" {
             let new = point(code), old = previous.point(code)
             if let new, let old { merged.append(new.date >= old.date ? new : old) }
             else if let p = new ?? old { merged.append(p) }
@@ -206,6 +233,13 @@ public struct FXTableModel: Sendable, Equatable {
 public enum FXTables {
     /// 人民币表、新台币表：「1 外币 = ? 本币」（日元、新台币、港币兑人民币按 100 单位）；
     /// 美元表：「1 美元 = ? 外币」（和 TradingView 的 USDCNY / USDJPY 一致，用户选的）。
+    /// TODO(sol)：按 `content` 生成表：每个 baseTables 一张，行是 currencies 里除基准外的币种（按顺序），
+    /// 单位用 Currency.unit(from:to:)；基准是美元时是「1 美元 = ? 外币」（单位固定 1）。标题用币种名，副标题沿用现在的写法。
+    /// 默认内容（PaneContent.standard）生成的结果必须和下面旧的 build 完全一样。
+    public static func build(_ s: FXSnapshot?, content: PaneContent) -> [FXTableModel] {
+        build(s)
+    }
+
     public static func build(_ s: FXSnapshot?) -> [FXTableModel] {
         func row(_ label: String, _ pair: FXPairSpec) -> FXRowModel {
             let v = s?.value(of: pair.from, in: pair.to), p = s?.previousValue(of: pair.from, in: pair.to)
@@ -241,15 +275,17 @@ public struct FXService: Sendable {
 
     /// 每个货币对取「前一天」（伦敦日期 ≤ expected）的收盘和再前一天的收盘。
     /// Yahoo 拿不到或落后时，用欧洲央行参考价补（新台币没有备用源）。
-    public func fetch(asOf now: Date = Date()) async -> FXSnapshot {
+    /// `codes`：要抓的币种（美元自动跳过）
+    public func fetch(asOf now: Date = Date(), codes: [String] = PaneContent.standard.currencies) async -> FXSnapshot {
         let expected = FXCalendar.lastCompletedDay(asOf: now)
+        let pairs = USDPair.all.filter { codes.contains($0.code) }
         var points = await withTaskGroup(of: FXPoint?.self) { group in
-            for pair in USDPair.all { group.addTask { await self.yahooPoint(pair, expected: expected) } }
+            for pair in pairs { group.addTask { await self.yahooPoint(pair, expected: expected) } }
             var out: [FXPoint] = []
             for await p in group { if let p { out.append(p) } }
             return out
         }
-        let needFallback = USDPair.all.filter { pair in
+        let needFallback = pairs.filter { pair in
             pair.inECB && (points.first { $0.code == pair.code }.map { $0.date < expected } ?? true)
         }
         if !needFallback.isEmpty,
@@ -263,7 +299,7 @@ public struct FXService: Sendable {
                 } else { points.append(p) }
             }
         }
-        let order = USDPair.all.map(\.code)
+        let order = pairs.map(\.code)
         points.sort { (order.firstIndex(of: $0.code) ?? 99) < (order.firstIndex(of: $1.code) ?? 99) }
         return FXSnapshot(expectedDate: expected, points: points, fetchedAt: now)
     }

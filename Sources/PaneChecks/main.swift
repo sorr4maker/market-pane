@@ -99,7 +99,7 @@ struct Mock: HTTPFetching {
 section("汇率抓取（5 个美元货币对，真实样本）")
 let fx = run { await FXService(fetcher: Mock()).fetch(asOf: sampleNow) }
 check("5 个货币对都有，日期都是 10/7，来自 Yahoo", fx.points.count == 5 && fx.points.allSatisfy { $0.date == "2026-10-07" && $0.source == .yahoo }
-      && !fx.isStale && fx.missing.isEmpty, "\(fx.points.map { "\($0.code) \($0.date)" })")
+      && !fx.isStale && fx.missing(in: PaneContent.standard.currencies).isEmpty, "\(fx.points.map { "\($0.code) \($0.date)" })")
 check("美元兑人民币 10/7 = 6.7045", near(fx.value(of: "USD", in: "CNY"), 6.7045, 1e-5), "\(fx.value(of: "USD", in: "CNY")!)")
 check("今天（10/8）那根没收盘的被排除", fx.points.allSatisfy { $0.date <= "2026-10-07" })
 
@@ -130,14 +130,14 @@ for (code, file) in [("JPY", "fx_JPYCNY.json"), ("USD", "fx_USDCNY.json"), ("EUR
 section("备用源：欧洲央行（Yahoo 挂掉时）")
 let fxECB = run { await FXService(fetcher: Mock(yahooDown: true)).fetch(asOf: sampleNow) }
 check("补上人民币、日元、欧元、港币，日期 10/7", fxECB.points.map(\.code) == ["CNY", "JPY", "EUR", "HKD"] && fxECB.points.allSatisfy { $0.source == .ecb && $0.date == "2026-10-07" })
-check("新台币缺失而不是编造", fxECB.missing == ["TWD"])
+check("新台币缺失而不是编造", fxECB.missing(in: PaneContent.standard.currencies) == ["TWD"])
 check("欧洲央行 1 美元 = 6.7046 人民币（取倒数正确）", near(fxECB.value(of: "USD", in: "CNY"), 6.7046, 1e-4), "\(fxECB.value(of: "USD", in: "CNY")!)")
 let ecbTables = FXTables.build(fxECB)
 check("缺新台币时：新台币表整张显示空，其他表里的新台币那行也空，其余正常",
       ecbTables[1].rows.allSatisfy { $0.value == nil } && ecbTables[0].rows[3].value == nil && ecbTables[2].rows[3].value == nil
       && ecbTables[0].rows[1].value != nil)
 let fxNone = run { await FXService(fetcher: Mock(yahooDown: true, ecbDown: true)).fetch(asOf: sampleNow) }
-check("两个源都挂：没有数据", fxNone.points.isEmpty && fxNone.missing.count == 5)
+check("两个源都挂：没有数据", fxNone.points.isEmpty && fxNone.missing(in: PaneContent.standard.currencies).count == 5)
 check("没有数据时表格照样有 5 行，全部为空", FXTables.build(nil).allSatisfy { $0.rows.count == 5 && $0.rows.allSatisfy { $0.value == nil } })
 
 section("汇率合并旧数据")
@@ -529,7 +529,7 @@ if CommandLine.arguments.contains("--live") {
     for t in FXTables.build(liveFX) {
         print("    \(t.title)（\(t.subtitle)）: " + t.rows.map { "\($0.label) \($0.value.map { String(format: "%.4f", $0) } ?? "—")" }.joined(separator: "  "))
     }
-    check("汇率 5 个货币对都有且不落后（\(liveFX.expectedDate)）", liveFX.missing.isEmpty && !liveFX.isStale)
+    check("汇率 5 个货币对都有且不落后（\(liveFX.expectedDate)）", liveFX.missing(in: PaneContent.standard.currencies).isEmpty && !liveFX.isStale)
     let liveCharts = ChartService()
     for p in ChartPeriod.indexPeriods {
         let s = run { try? await liveCharts.series(symbol: "^GSPC", period: p, force: true) }

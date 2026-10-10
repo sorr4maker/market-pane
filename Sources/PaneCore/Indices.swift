@@ -1,8 +1,16 @@
 import Foundation
 
-public enum Region: String, Codable, Sendable, CaseIterable { case asia = "亚太", europe = "欧洲", us = "美国" }
+public enum Region: String, Codable, Sendable, CaseIterable {
+    case asia = "亚太", europe = "欧洲", us = "美洲"
+    /// 自填代码时按交易所时区归组：Europe/… 欧洲，America/… 美洲，其余（Asia/、Australia/、Pacific/…）亚太
+    public static func of(timeZoneID: String) -> Region {
+        if timeZoneID.hasPrefix("Europe/") { return .europe }
+        if timeZoneID.hasPrefix("America/") { return .us }
+        return .asia
+    }
+}
 
-public struct IndexSpec: Sendable, Hashable {
+public struct IndexSpec: Codable, Sendable, Hashable, Identifiable {
     public let id: String
     public let name: String
     public let yahooSymbol: String
@@ -11,8 +19,14 @@ public struct IndexSpec: Sendable, Hashable {
     public let region: Region
     /// 交易所所在时区，用来显示「哪天的收盘」
     public let timeZoneID: String
-    public var timeZone: TimeZone { TimeZone(identifier: timeZoneID)! }
+    public var timeZone: TimeZone { TimeZone(identifier: timeZoneID) ?? TimeZone(identifier: "UTC")! }
 
+    public init(id: String, name: String, yahooSymbol: String, sinaCode: String?, region: Region, timeZoneID: String) {
+        self.id = id; self.name = name; self.yahooSymbol = yahooSymbol; self.sinaCode = sinaCode
+        self.region = region; self.timeZoneID = timeZoneID
+    }
+
+    /// 默认显示的 12 个（用户最早定的）
     public static let all: [IndexSpec] = [
         .init(id: "SSE",  name: "上证指数",   yahooSymbol: "000001.SS", sinaCode: "sh000001", region: .asia,   timeZoneID: "Asia/Shanghai"),
         .init(id: "TWII", name: "台湾加权",   yahooSymbol: "^TWII",     sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Taipei"),
@@ -28,7 +42,43 @@ public struct IndexSpec: Sendable, Hashable {
         .init(id: "VXN",  name: "VXN",        yahooSymbol: "^VXN",      sinaCode: nil,        region: .us,     timeZoneID: "America/New_York"),
     ]
 
-    public static func spec(_ id: String) -> IndexSpec? { all.first { $0.id == id } }
+    public static func spec(_ id: String) -> IndexSpec? { IndexCatalog.all.first { $0.id == id } }
+}
+
+/// 「编辑内容」里可以直接勾选的常用指数（默认 12 个 + 下面这些）。代码都在 2026-10-10 实测能从 Yahoo 抓到、类型是 INDEX；
+/// 清单外的指数用户可以自填 Yahoo 代码（见 IndexService.probe）。A 股指数另有新浪实时价。
+public enum IndexCatalog {
+    public static let extras: [IndexSpec] = [
+        .init(id: "HSI",     name: "恒生指数",     yahooSymbol: "^HSI",       sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Hong_Kong"),
+        .init(id: "HSTECH",  name: "恒生科技",     yahooSymbol: "HSTECH.HK",  sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Hong_Kong"),
+        .init(id: "HSCE",    name: "国企指数",     yahooSymbol: "^HSCE",      sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Hong_Kong"),
+        .init(id: "CSI300",  name: "沪深300",      yahooSymbol: "000300.SS",  sinaCode: "sh000300", region: .asia,   timeZoneID: "Asia/Shanghai"),
+        .init(id: "SZI",     name: "深证成指",     yahooSymbol: "399001.SZ",  sinaCode: "sz399001", region: .asia,   timeZoneID: "Asia/Shanghai"),
+        .init(id: "CHINEXT", name: "创业板指",     yahooSymbol: "399006.SZ",  sinaCode: "sz399006", region: .asia,   timeZoneID: "Asia/Shanghai"),
+        .init(id: "STAR50",  name: "科创50",       yahooSymbol: "000688.SS",  sinaCode: "sh000688", region: .asia,   timeZoneID: "Asia/Shanghai"),
+        .init(id: "SSE50",   name: "上证50",       yahooSymbol: "000016.SS",  sinaCode: "sh000016", region: .asia,   timeZoneID: "Asia/Shanghai"),
+        .init(id: "KOSDAQ",  name: "韩国KOSDAQ",   yahooSymbol: "^KQ11",      sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Seoul"),
+        .init(id: "NIFTY",   name: "印度Nifty50",  yahooSymbol: "^NSEI",      sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Kolkata"),
+        .init(id: "SENSEX",  name: "印度Sensex",   yahooSymbol: "^BSESN",     sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Kolkata"),
+        .init(id: "STI",     name: "新加坡STI",    yahooSymbol: "^STI",       sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Singapore"),
+        .init(id: "ASX200",  name: "澳洲ASX200",   yahooSymbol: "^AXJO",      sinaCode: nil,        region: .asia,   timeZoneID: "Australia/Sydney"),
+        .init(id: "NZ50",    name: "新西兰NZX50",  yahooSymbol: "^NZ50",      sinaCode: nil,        region: .asia,   timeZoneID: "Pacific/Auckland"),
+        .init(id: "JKSE",    name: "印尼综合",     yahooSymbol: "^JKSE",      sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Jakarta"),
+        .init(id: "KLSE",    name: "马来西亚KLCI", yahooSymbol: "^KLSE",      sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Kuala_Lumpur"),
+        .init(id: "SET",     name: "泰国SET",      yahooSymbol: "^SET.BK",    sinaCode: nil,        region: .asia,   timeZoneID: "Asia/Bangkok"),
+        .init(id: "SX5E",    name: "欧洲斯托克50", yahooSymbol: "^STOXX50E",  sinaCode: nil,        region: .europe, timeZoneID: "Europe/Zurich"),
+        .init(id: "FTSEMIB", name: "意大利富时MIB", yahooSymbol: "FTSEMIB.MI", sinaCode: nil,       region: .europe, timeZoneID: "Europe/Rome"),
+        .init(id: "IBEX",    name: "西班牙IBEX35", yahooSymbol: "^IBEX",      sinaCode: nil,        region: .europe, timeZoneID: "Europe/Madrid"),
+        .init(id: "AEX",     name: "荷兰AEX",      yahooSymbol: "^AEX",       sinaCode: nil,        region: .europe, timeZoneID: "Europe/Amsterdam"),
+        .init(id: "SMI",     name: "瑞士SMI",      yahooSymbol: "^SSMI",      sinaCode: nil,        region: .europe, timeZoneID: "Europe/Zurich"),
+        .init(id: "IXIC",    name: "纳斯达克综合", yahooSymbol: "^IXIC",      sinaCode: nil,        region: .us,     timeZoneID: "America/New_York"),
+        .init(id: "RUT",     name: "罗素2000",     yahooSymbol: "^RUT",       sinaCode: nil,        region: .us,     timeZoneID: "America/New_York"),
+        .init(id: "SOX",     name: "费城半导体",   yahooSymbol: "^SOX",       sinaCode: nil,        region: .us,     timeZoneID: "America/New_York"),
+        .init(id: "DXY",     name: "美元指数",     yahooSymbol: "DX-Y.NYB",   sinaCode: nil,        region: .us,     timeZoneID: "America/New_York"),
+        .init(id: "BVSP",    name: "巴西IBOVESPA", yahooSymbol: "^BVSP",      sinaCode: nil,        region: .us,     timeZoneID: "America/Sao_Paulo"),
+        .init(id: "MXX",     name: "墨西哥IPC",    yahooSymbol: "^MXX",       sinaCode: nil,        region: .us,     timeZoneID: "America/Mexico_City"),
+    ]
+    public static var all: [IndexSpec] { IndexSpec.all + extras }
 }
 
 /// 常规交易时段（Yahoo 的 currentTradingPeriod.regular）
@@ -112,12 +162,13 @@ public struct IndexBoard: Codable, Sendable, Equatable {
         quotes.contains { $0.isTrading(at: now) } || gold?.isTrading(at: now) == true
     }
 
-    /// 这次没抓到、或抓到的比旧的还旧，就沿用旧的，一次网络失败不会清空面板。顺序固定为 IndexSpec.all。
-    public func merging(previous: IndexBoard?) -> IndexBoard {
+    /// 这次没抓到、或抓到的比旧的还旧，就沿用旧的，一次网络失败不会清空面板。顺序按 `ids`（用户选的指数），
+    /// 不在 `ids` 里的旧报价丢掉（用户删掉的指数）。
+    public func merging(previous: IndexBoard?, ids: [String] = IndexSpec.all.map(\.id)) -> IndexBoard {
         guard let previous else { return self }
         var merged: [IndexQuote] = []
-        for spec in IndexSpec.all {
-            let new = quote(spec.id), old = previous.quote(spec.id)
+        for id in ids {
+            let new = quote(id), old = previous.quote(id)
             if let new, let old { merged.append(new.time >= old.time ? new : old) }
             else if let q = new ?? old { merged.append(q) }
         }

@@ -3,7 +3,34 @@ import Foundation
 public struct PaneSettings: Codable, Sendable, Equatable {
     /// true = 红涨绿跌
     public var upIsRed: Bool
-    public init(upIsRed: Bool = true) { self.upIsRed = upIsRed }
+    /// 面板上显示哪些指数、币种和基准表（用户在「编辑内容」里改）
+    public var content: PaneContent
+    public init(upIsRed: Bool = true, content: PaneContent = .standard) { self.upIsRed = upIsRed; self.content = content }
+
+    private enum CodingKeys: String, CodingKey { case upIsRed, content }
+    /// 旧版本存的快照没有 content，按默认内容读
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        upIsRed = try c.decodeIfPresent(Bool.self, forKey: .upIsRed) ?? true
+        content = try c.decodeIfPresent(PaneContent.self, forKey: .content) ?? .standard
+    }
+}
+
+/// 面板显示的内容。顺序就是显示顺序（指数在各自地区卡片里按这个顺序排）。
+public struct PaneContent: Codable, Sendable, Equatable {
+    public var indices: [IndexSpec]
+    /// 汇率表里出现的币种（代码，如 "JPY"），也是每张表里行的顺序
+    public var currencies: [String]
+    /// 哪些币种各有一张表，也是表的顺序。美元表是「1 美元 = ? 外币」，其余是「? 外币 = ? 本币」
+    public var baseTables: [String]
+
+    public init(indices: [IndexSpec], currencies: [String], baseTables: [String]) {
+        self.indices = indices; self.currencies = currencies; self.baseTables = baseTables
+    }
+
+    /// 用户最早定的：12 个指数；中日美欧台港；人民币、新台币、美元三张表
+    public static let standard = PaneContent(indices: IndexSpec.all, currencies: ["CNY", "JPY", "USD", "EUR", "TWD", "HKD"],
+                                             baseTables: ["CNY", "TWD", "USD"])
 }
 
 /// 面板上显示的全部数据，存在磁盘上，App 重启后马上能显示上次的内容。
@@ -48,9 +75,10 @@ public enum RefreshPolicy {
     }
 
     /// 汇率是「前一天」的收盘：换日了、或数据落后/缺币种时才抓；失败后最多每 15 分钟重试。
-    public static func fxDue(_ fx: FXSnapshot?, now: Date) -> Bool {
+    /// `codes`：用户选的币种（刚加了新币种时它会出现在 missing 里，下一轮就去抓）
+    public static func fxDue(_ fx: FXSnapshot?, now: Date, codes: [String] = PaneContent.standard.currencies) -> Bool {
         guard let fx else { return true }
-        let outdated = fx.expectedDate != FXCalendar.lastCompletedDay(asOf: now) || fx.isStale || !fx.missing.isEmpty
+        let outdated = fx.expectedDate != FXCalendar.lastCompletedDay(asOf: now) || fx.isStale || !fx.missing(in: codes).isEmpty
         return outdated && now.timeIntervalSince(fx.fetchedAt) >= 900
     }
 }
